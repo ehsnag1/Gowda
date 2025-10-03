@@ -1,7 +1,8 @@
 from django.shortcuts import render, redirect, get_object_or_404
-from .models import Movie, Review, MovieRequest
+from .models import Movie, Review, MovieRequest, Petition, PetitionVote
 from django.contrib.auth.decorators import login_required
-from .forms import MovieRequestForm
+from .forms import MovieRequestForm, PetitionForm
+from django.http import JsonResponse
 
 def index(request):
     search_term = request.GET.get('search')
@@ -90,5 +91,58 @@ def delete_movie_request(request, request_id):
     movie_request = get_object_or_404(MovieRequest, id=request_id, user=request.user)
     movie_request.delete()
     return redirect('movies.movie_requests')
+
+def petitions(request):
+    if request.method == 'POST' and request.user.is_authenticated:
+        form = PetitionForm(request.POST)
+        if form.is_valid():
+            petition = form.save(commit=False)
+            petition.creator = request.user
+            petition.save()
+            return redirect('movies.petitions')
+    else:
+        form = PetitionForm()
+    
+    # Get all petitions ordered by date (newest first)
+    petitions_list = Petition.objects.all().order_by('-date')
+    
+    # Add user vote information to each petition if user is authenticated
+    if request.user.is_authenticated:
+        for petition in petitions_list:
+            petition.user_has_voted = petition.has_user_voted(request.user)
+            petition.user_vote = petition.get_user_vote(request.user)
+    
+    template_data = {}
+    template_data['title'] = 'Movie Petitions'
+    template_data['form'] = form
+    template_data['petitions'] = petitions_list
+    
+    return render(request, 'movies/petitions.html', {'template_data': template_data})
+
+@login_required
+def vote_petition(request, petition_id):
+    if request.method == 'POST':
+        petition = get_object_or_404(Petition, id=petition_id)
+        vote_type = request.POST.get('vote_type')
+        
+        if vote_type in ['yes', 'no']:
+            # Check if user already voted
+            existing_vote = PetitionVote.objects.filter(petition=petition, user=request.user).first()
+            
+            if existing_vote:
+                # Update existing vote
+                existing_vote.vote_type = vote_type
+                existing_vote.save()
+            else:
+                # Create new vote
+                PetitionVote.objects.create(
+                    petition=petition,
+                    user=request.user,
+                    vote_type=vote_type
+                )
+        
+        return redirect('movies.petitions')
+    
+    return redirect('movies.petitions')
 
  
